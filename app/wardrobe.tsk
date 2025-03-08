@@ -1,0 +1,538 @@
+import React, { useEffect, useState } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Image,
+  FlatList,
+  TextInput,
+  Modal,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
+import { router } from 'expo-router';
+import { useWardrobeStore } from '@/lib/wardrobeStore';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { Picker } from '@react-native-picker/picker';
+import { supabase } from '@/lib/supabase';
+
+export default function WardrobeScreen() {
+  const { items, loading, fetchItems, addItem, deleteItem } = useWardrobeStore();
+  const [modalVisible, setModalVisible] = useState(false);
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('Tops');
+  const [color, setColor] = useState('');
+  const [imageUri, setImageUri] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [filterCategory, setFilterCategory] = useState('All');
+
+  useEffect(() => {
+    fetchItems();
+  }, []);
+
+  const goBack = () => {
+    router.back();
+  };
+
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'We need permission to access your photos');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled) {
+      setImageUri(result.assets[0].uri);
+    }
+  };
+
+  const uploadImage = async () => {
+    if (!imageUri) return null;
+
+    try {
+      setUploading(true);
+
+      // Convert image to blob
+      const response = await fetch(imageUri);
+      const blob = await response.blob();
+      
+      // Create file path in Supabase Storage
+      const fileExt = imageUri.split('.').pop();
+      const fileName = `${Date.now()}.${fileExt}`;
+      const filePath = `wardrobe/${fileName}`;
+
+      // Upload image to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('images')
+        .upload(filePath, blob);
+
+      if (uploadError) {
+        throw uploadError;
+      }
+
+      // Get public URL
+      const { data } = supabase.storage.from('images').getPublicUrl(filePath);
+      
+      return data.publicUrl;
+    } catch (error) {
+      console.error('Error uploading image:', error);
+      Alert.alert('Upload failed', 'Error uploading image');
+      return null;
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleAddItem = async () => {
+    if (!name) {
+      Alert.alert('Error', 'Please enter a name for the item');
+      return;
+    }
+
+    if (!imageUri) {
+      Alert.alert('Error', 'Please select an image');
+      return;
+    }
+
+    try {
+      const imageUrl = await uploadImage();
+      
+      if (!imageUrl) {
+        throw new Error('Failed to upload image');
+      }
+
+      await addItem({
+        name,
+        category,
+        color,
+        image_url: imageUrl,
+      });
+
+      // Reset form
+      setName('');
+      setCategory('Tops');
+      setColor('');
+      setImageUri('');
+      setModalVisible(false);
+    } catch (error) {
+      console.error('Error adding item:', error);
+      Alert.alert('Error', 'Failed to add item');
+    }
+  };
+
+  const handleDeleteItem = (id) => {
+    Alert.alert(
+      'Delete Item',
+      'Are you sure you want to delete this item?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => deleteItem(id),
+        },
+      ]
+    );
+  };
+
+  const filteredItems = filterCategory === 'All' 
+    ? items 
+    : items.filter(item => item.category === filterCategory);
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={goBack} style={styles.backButton}>
+          <Ionicons name="arrow-back" size={24} color="#333" />
+        </TouchableOpacity>
+        <Text style={styles.title}>My Wardrobe</Text>
+        <TouchableOpacity onPress={() => setModalVisible(true)} style={styles.addButton}>
+          <Ionicons name="add" size={24} color="#333" />
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.filterContainer}>
+        <Text style={styles.filterLabel}>Filter by:</Text>
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterScroll}
+        >
+          {['All', 'Tops', 'Bottoms', 'Dresses', 'Outerwear', 'Shoes', 'Accessories'].map((cat) => (
+            <TouchableOpacity
+              key={cat}
+              style={[
+                styles.filterItem,
+                filterCategory === cat && styles.filterItemActive,
+              ]}
+              onPress={() => setFilterCategory(cat)}
+            >
+              <Text 
+                style={[
+                  styles.filterText,
+                  filterCategory === cat && styles.filterTextActive,
+                ]}
+              >
+                {cat}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {loading ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color="#0000ff" />
+        </View>
+      ) : (
+        <FlatList
+          data={filteredItems}
+          numColumns={2}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => (
+            <View style={styles.itemContainer}>
+              <Image source={{ uri: item.image_url }} style={styles.itemImage} />
+              <View style={styles.itemDetails}>
+                <Text style={styles.itemName} numberOfLines={1}>{item.name}</Text>
+                <Text style={styles.itemCategory}>{item.category}</Text>
+                {item.color && <Text style={styles.itemColor}>{item.color}</Text>}
+              </View>
+              <TouchableOpacity 
+                style={styles.deleteButton}
+                onPress={() => handleDeleteItem(item.id)}
+              >
+                <Ionicons name="trash-outline" size={18} color="#e74c3c" />
+              </TouchableOpacity>
+            </View>
+          )}
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No items found</Text>
+              <TouchableOpacity 
+                style={styles.emptyButton}
+                onPress={() => setModalVisible(true)}
+              >
+                <Text style={styles.emptyButtonText}>Add your first item</Text>
+              </TouchableOpacity>
+            </View>
+          }
+          contentContainerStyle={styles.listContent}
+        />
+      )}
+
+      {/* Add Item Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={modalVisible}
+        onRequestClose={() => setModalVisible(false)}
+      >
+        <View style={styles.modalContainer}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Add New Item</Text>
+            
+            <TouchableOpacity 
+              style={styles.imagePickerContainer}
+              onPress={pickImage}
+            >
+              {imageUri ? (
+                <Image source={{ uri: imageUri }} style={styles.pickedImage} />
+              ) : (
+                <View style={styles.imagePlaceholder}>
+                  <Ionicons name="camera-outline" size={40} color="#999" />
+                  <Text style={styles.imagePlaceholderText}>Tap to select image</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Item Name"
+              value={name}
+              onChangeText={setName}
+            />
+
+            <View style={styles.pickerContainer}>
+              <Text style={styles.pickerLabel}>Category:</Text>
+              <Picker
+                selectedValue={category}
+                onValueChange={(value) => setCategory(value)}
+                style={styles.picker}
+              >
+                <Picker.Item label="Tops" value="Tops" />
+                <Picker.Item label="Bottoms" value="Bottoms" />
+                <Picker.Item label="Dresses" value="Dresses" />
+                <Picker.Item label="Outerwear" value="Outerwear" />
+                <Picker.Item label="Shoes" value="Shoes" />
+                <Picker.Item label="Accessories" value="Accessories" />
+              </Picker>
+            </View>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Color (optional)"
+              value={color}
+              onChangeText={setColor}
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity 
+                style={styles.cancelButton}
+                onPress={() => setModalVisible(false)}
+              >
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.saveButton}
+                onPress={handleAddItem}
+                disabled={uploading}
+              >
+                {uploading ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Save</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8f8f8',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    paddingTop: 60,
+    backgroundColor: '#fff',
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  backButton: {
+    padding: 8,
+  },
+  addButton: {
+    padding: 8,
+  },
+  filterContainer: {
+    backgroundColor: '#fff',
+    paddingHorizontal: 20,
+    paddingBottom: 15,
+  },
+  filterLabel: {
+    marginBottom: 8,
+    fontSize: 14,
+    color: '#666',
+  },
+  filterScroll: {
+    paddingRight: 20,
+  },
+  filterItem: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f0f0f0',
+    marginRight: 10,
+  },
+  filterItemActive: {
+    backgroundColor: '#4A90E2',
+  },
+  filterText: {
+    color: '#333',
+  },
+  filterTextActive: {
+    color: '#fff',
+    fontWeight: '500',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  listContent: {
+    padding: 10,
+    paddingBottom: 50,
+  },
+  itemContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    overflow: 'hidden',
+    marginHorizontal: 6,
+    marginVertical: 8,
+    width: '47%',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  itemImage: {
+    width: '100%',
+    height: 150,
+    resizeMode: 'cover',
+  },
+  itemDetails: {
+    padding: 10,
+  },
+  itemName: {
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  itemCategory: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  itemColor: {
+    color: '#888',
+    fontSize: 12,
+  },
+  deleteButton: {
+    position: 'absolute',
+    top: 10,
+    right: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.8)',
+    borderRadius: 15,
+    width: 30,
+    height: 30,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    padding: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#888',
+    marginBottom: 20,
+  },
+  emptyButton: {
+    backgroundColor: '#4A90E2',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  emptyButtonText: {
+    color: '#fff',
+    fontWeight: '500',
+  },
+  modalContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    paddingBottom: 40,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+  },
+  imagePickerContainer: {
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  imagePlaceholder: {
+    width: 150,
+    height: 150,
+    borderRadius: 10,
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderStyle: 'dashed',
+  },
+  imagePlaceholderText: {
+    color: '#999',
+    marginTop: 10,
+  },
+  pickedImage: {
+    width: 150,
+    height: 150,
+    borderRadius: 10,
+  },
+  input: {
+    backgroundColor: '#f8f8f8',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    fontSize: 16,
+  },
+  pickerContainer: {
+    marginBottom: 16,
+  },
+  pickerLabel: {
+    marginBottom: 8,
+    color: '#666',
+  },
+  picker: {
+    backgroundColor: '#f8f8f8',
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+  },
+  cancelButton: {
+    flex: 1,
+    backgroundColor: '#f0f0f0',
+    padding: 15,
+    borderRadius: 8,
+    marginRight: 10,
+    alignItems: 'center',
+  },
+  cancelButtonText: {
+    color: '#333',
+    fontWeight: '500',
+  },
+  saveButton: {
+    flex: 1,
+    backgroundColor: '#4A90E2',
+    padding: 15,
+    borderRadius: 8,
+    marginLeft: 10,
+    alignItems: 'center',
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontWeight: '500',
+  },
