@@ -17,7 +17,8 @@ import { useAuthStore } from '../../lib/authStore';
 import { useWeatherStore } from '../../lib/weatherStore';
 import { useWardrobeStore } from '../../lib/wardrobeStore';
 import { useAIStore } from '../../stores/aiStore';
-import { Cloud, Droplets, Thermometer, Wind, Search, X, RefreshCw } from 'lucide-react-native';
+import { Droplets, Thermometer, Wind, Search, X, RefreshCw, MapPin, AlertCircle } from 'lucide-react-native';
+import { router } from 'expo-router';
 
 const occasions = [
   'Casual', 'Work', 'Formal', 'Date Night', 'Workout', 'Beach', 'Party'
@@ -26,9 +27,10 @@ const occasions = [
 export default function HomeScreen() {
   const { session } = useAuthStore();
   const { 
-    weather: weather, 
-    loading: weatherLoading, 
-    fetchWeather: fetchWeather 
+    weather, 
+    loading: weatherLoading,
+    error: weatherError,
+    fetchWeather 
   } = useWeatherStore();
   const { 
     items, 
@@ -45,23 +47,54 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [citySearchVisible, setCitySearchVisible] = useState(false);
   const [cityInput, setCityInput] = useState('');
+  const [currentCity, setCurrentCity] = useState('London'); // Default city
   const [occasionModalVisible, setOccasionModalVisible] = useState(false);
   const [selectedOccasion, setSelectedOccasion] = useState('Casual');
+  const [initialLoad, setInitialLoad] = useState(true);
 
   useEffect(() => {
-    fetchWeather();
-    fetchItems();
-  }, []);
+    // If not logged in, redirect to login
+    if (!session) {
+      router.replace('/login');
+      return;
+    }
+    
+    // Load data on initial mount
+    const loadData = async () => {
+      try {
+        console.log('Fetching weather data...');
+        await fetchWeather(currentCity);
+        console.log('Weather data:', weather);
+        
+        console.log('Fetching wardrobe items...');
+        await fetchItems();
+        console.log('Wardrobe items:', items);
+      } catch (error) {
+        console.error('Error loading data:', error);
+      } finally {
+        // Hide initial loading state regardless of success/failure
+        setInitialLoad(false);
+      }
+    };
+    
+    loadData();
+  }, [session]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([fetchWeather(), fetchItems()]);
-    clearRecommendation();
-    setRefreshing(false);
+    try {
+      await Promise.all([fetchWeather(currentCity), fetchItems()]);
+      clearRecommendation();
+    } catch (error) {
+      console.error('Error refreshing data:', error);
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleCitySearch = () => {
     if (cityInput.trim()) {
+      setCurrentCity(cityInput);
       fetchWeather(cityInput);
       setCitySearchVisible(false);
       setCityInput('');
@@ -69,20 +102,43 @@ export default function HomeScreen() {
   };
 
   const generateRecommendation = async () => {
-    if (!weather || items.length === 0) return;
+    if (!weather || items.length === 0) {
+      if (items.length === 0) {
+        Alert.alert(
+          "No Wardrobe Items",
+          "Please add some clothing items to your wardrobe first to get outfit recommendations.",
+          [
+            { text: "Add Items", onPress: () => router.push('/wardrobe') },
+            { text: "Cancel", style: "cancel" }
+          ]
+        );
+      }
+      return;
+    }
     await getOutfitRecommendation(weather, items, selectedOccasion);
   };
 
-  if (!session) {
-    return null; // Will be redirected by the tab layout
+  // Handle initial loading state
+  if (initialLoad) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centeredContainer}>
+          <ActivityIndicator size="large" color="#6366f1" />
+          <Text style={styles.loadingText}>Loading your fashion assistant...</Text>
+        </View>
+      </SafeAreaView>
+    );
   }
 
-  if (weatherLoading || wardrobeLoading) {
+  // Handle authentication redirect
+  if (!session) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#6366f1" />
-        <Text style={styles.loadingText}>Loading your fashion assistant...</Text>
-      </View>
+      <SafeAreaView style={styles.container}>
+        <View style={styles.centeredContainer}>
+          <ActivityIndicator size="large" color="#6366f1" />
+          <Text style={styles.loadingText}>Redirecting to login...</Text>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -97,7 +153,7 @@ export default function HomeScreen() {
         {/* Header with search city option */}
         <View style={styles.header}>
           <View>
-            <Text style={styles.greeting}>Hello, {session.user.email?.split('@')[0]}!</Text>
+            <Text style={styles.greeting}>Hello, {session.user.email?.split('@')[0] || 'there'}!</Text>
             <Text style={styles.subtitle}>How are you dressing today?</Text>
           </View>
           <TouchableOpacity 
@@ -111,16 +167,45 @@ export default function HomeScreen() {
         {/* Weather Card */}
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Today's Weather</Text>
+            <View style={styles.locationDisplay}>
+              <Text style={styles.cardTitle}>Today's Weather</Text>
+              {currentCity && (
+                <View style={styles.locationContainer}>
+                  <MapPin size={14} color="#6366f1" />
+                  <Text style={styles.locationText}>{currentCity}</Text>
+                </View>
+              )}
+            </View>
             <TouchableOpacity 
               style={styles.refreshButton}
-              onPress={() => fetchWeather()}
+              onPress={() => fetchWeather(currentCity)}
             >
               <RefreshCw size={16} color="#6366f1" />
             </TouchableOpacity>
           </View>
           
-          {weather ? (
+          {weatherLoading ? (
+            <View style={styles.weatherLoadingContainer}>
+              <ActivityIndicator color="#6366f1" />
+              <Text style={styles.weatherLoadingText}>Fetching weather data...</Text>
+            </View>
+          ) : weatherError ? (
+            <View style={styles.errorContainer}>
+              <AlertCircle size={24} color="#ef4444" />
+              <Text style={styles.errorText}>
+                {typeof weatherError === 'string' 
+                  ? weatherError 
+                  : "Couldn't fetch weather. Please try again."}
+              </Text>
+              <TouchableOpacity 
+                style={styles.retryButton}
+                onPress={() => fetchWeather(currentCity)}
+              >
+                <RefreshCw size={16} color="#ffffff" />
+                <Text style={styles.retryButtonText}>Retry</Text>
+              </TouchableOpacity>
+            </View>
+          ) : weather ? (
             <View style={styles.weatherContent}>
               <View style={styles.weatherMain}>
                 <View style={styles.weatherTemp}>
@@ -154,7 +239,16 @@ export default function HomeScreen() {
               </View>
             </View>
           ) : (
-            <Text style={styles.emptyText}>Weather information unavailable</Text>
+            <View style={styles.emptyStateContainer}>
+              <Text style={styles.emptyText}>Weather information unavailable</Text>
+              <TouchableOpacity
+                style={styles.emptyStateButton}
+                onPress={() => fetchWeather(currentCity)}
+              >
+                <RefreshCw size={16} color="#6366f1" />
+                <Text style={styles.emptyStateButtonText}>Get Weather</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
         
@@ -182,6 +276,7 @@ export default function HomeScreen() {
                 style={styles.newRecommendationButton}
                 onPress={generateRecommendation}
               >
+                <RefreshCw size={14} color="#6366f1" />
                 <Text style={styles.newRecommendationText}>Generate New Suggestion</Text>
               </TouchableOpacity>
             </View>
@@ -191,12 +286,19 @@ export default function HomeScreen() {
                 Get AI-powered outfit recommendations tailored to the weather and your personal style.
               </Text>
               <TouchableOpacity 
-                style={styles.generateButton}
+                style={[
+                  styles.generateButton,
+                  (items.length === 0 || !weather) && styles.disabledButton
+                ]}
                 onPress={generateRecommendation}
-                disabled={items.length === 0}
+                disabled={items.length === 0 || !weather}
               >
                 <Text style={styles.generateButtonText}>
-                  {items.length === 0 ? 'Add items to your wardrobe first' : 'Generate Outfit Suggestion'}
+                  {items.length === 0 
+                    ? 'Add items to your wardrobe first' 
+                    : !weather 
+                    ? 'Waiting for weather data'
+                    : 'Generate Outfit Suggestion'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -204,9 +306,14 @@ export default function HomeScreen() {
         </View>
         
         {/* From Your Wardrobe Section */}
-        {items.length > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>From Your Wardrobe</Text>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Your Wardrobe</Text>
+          {wardrobeLoading ? (
+            <View style={styles.wardrobeLoadingContainer}>
+              <ActivityIndicator size="small" color="#6366f1" />
+              <Text style={styles.wardrobeLoadingText}>Loading items...</Text>
+            </View>
+          ) : items.length > 0 ? (
             <View style={styles.recommendedItems}>
               {items.slice(0, 4).map((item) => (
                 <Text key={item.id} style={styles.recommendedItem}>• {item.name} ({item.category})</Text>
@@ -216,9 +323,25 @@ export default function HomeScreen() {
                   +{items.length - 4} more items in your wardrobe
                 </Text>
               )}
+              <TouchableOpacity
+                style={styles.viewWardrobeButton}
+                onPress={() => router.push('/wardrobe')}
+              >
+                <Text style={styles.viewWardrobeButtonText}>View Wardrobe</Text>
+              </TouchableOpacity>
             </View>
-          </View>
-        )}
+          ) : (
+            <View style={styles.emptyStateContainer}>
+              <Text style={styles.emptyText}>Your wardrobe is empty</Text>
+              <TouchableOpacity
+                style={styles.emptyStateButton}
+                onPress={() => router.push('/wardrobe')}
+              >
+                <Text style={styles.emptyStateButtonText}>Add Clothing Items</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </ScrollView>
       
       {/* City Search Modal */}
@@ -243,6 +366,8 @@ export default function HomeScreen() {
               value={cityInput}
               onChangeText={setCityInput}
               autoFocus
+              returnKeyType="search"
+              onSubmitEditing={handleCitySearch}
             />
             
             <TouchableOpacity 
@@ -303,15 +428,17 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8f8f8',
   },
-  loadingContainer: {
+  centeredContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    padding: 20,
   },
   loadingText: {
-    marginTop: 10,
+    marginTop: 16,
     fontSize: 16,
     color: '#666',
+    textAlign: 'center',
   },
   scrollContainer: {
     padding: 16,
@@ -355,11 +482,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  locationDisplay: {
+    flex: 1,
+  },
   cardTitle: {
     fontSize: 18,
     fontWeight: '600',
     color: '#333',
-    marginBottom: 12,
+  },
+  locationContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  locationText: {
+    color: '#6366f1',
+    marginLeft: 4,
+    fontSize: 14,
   },
   refreshButton: {
     padding: 4,
@@ -408,6 +547,64 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
     textAlign: 'center',
     marginTop: 8,
+    marginBottom: 12,
+  },
+  weatherLoadingContainer: {
+    padding: 16,
+    alignItems: 'center',
+  },
+  weatherLoadingText: {
+    marginTop: 8,
+    color: '#666',
+    fontSize: 14,
+  },
+  wardrobeLoadingContainer: {
+    padding: 8,
+    alignItems: 'center',
+  },
+  wardrobeLoadingText: {
+    marginTop: 8,
+    color: '#666',
+    fontSize: 14,
+  },
+  errorContainer: {
+    alignItems: 'center',
+    padding: 16,
+  },
+  errorText: {
+    color: '#ef4444',
+    marginVertical: 12,
+    textAlign: 'center',
+  },
+  retryButton: {
+    backgroundColor: '#6366f1',
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  retryButtonText: {
+    color: '#ffffff',
+    fontWeight: '500',
+    marginLeft: 6,
+  },
+  emptyStateContainer: {
+    alignItems: 'center',
+    padding: 12,
+  },
+  emptyStateButton: {
+    flexDirection: 'row',
+    backgroundColor: '#f0f0f0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  emptyStateButtonText: {
+    color: '#6366f1',
+    fontWeight: '500',
+    marginLeft: 6,
   },
   outfitRecommendation: {
     fontSize: 16,
@@ -435,6 +632,17 @@ const styles = StyleSheet.create({
     color: '#6366f1',
     marginTop: 8,
     textAlign: 'center',
+  },
+  viewWardrobeButton: {
+    backgroundColor: '#f0f0f0',
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 16,
+  },
+  viewWardrobeButtonText: {
+    color: '#6366f1',
+    fontWeight: '500',
   },
   occasionButton: {
     backgroundColor: '#f0f0f0',
@@ -466,16 +674,19 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   newRecommendationButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 16,
     backgroundColor: '#f0f0f0',
     padding: 10,
     borderRadius: 8,
-    alignItems: 'center',
   },
   newRecommendationText: {
     color: '#6366f1',
     fontWeight: '500',
     fontSize: 14,
+    marginLeft: 6,
   },
   emptyRecommendationContainer: {
     alignItems: 'center',
@@ -488,6 +699,9 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: 12,
     alignItems: 'center',
+  },
+  disabledButton: {
+    backgroundColor: '#a5a6f6',
   },
   generateButtonText: {
     color: '#fff',
