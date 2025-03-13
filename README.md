@@ -20,16 +20,11 @@ my-react-native-app
 ```
 
 ## Installation
-
-1. Clone the repository:
-   ```
-   git clone <repository-url>
-   ```
-2. Navigate to the project directory:
+1. Navigate to the project directory:
    ```
    cd my-react-native-app
    ```
-3. Install the dependencies:
+2. Install the dependencies:
    ```
    npm install
    ```
