@@ -1,3 +1,4 @@
+// stores/aiStore.ts
 import { create } from 'zustand';
 import { generateOutfitRecommendation, getStyleAdvice } from '../lib/openaiService';
 

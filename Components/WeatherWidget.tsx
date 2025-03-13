@@ -35,7 +35,7 @@ export const useWeatherStore = create<WeatherStore>((set) => ({
       } 
       // If it's a string or undefined, use city-based search
       else {
-        const city = typeof cityOrLat === 'string' ? cityOrLat : 'London';
+        const city = typeof cityOrLat === 'string' ? cityOrLat : 'Tampa';
         response = await axios.get(
           `https://api.openweathermap.org/data/2.5/weather?q=${city}&units=metric&appid=${process.env.EXPO_PUBLIC_OPENWEATHER_API_KEY}`
         );
